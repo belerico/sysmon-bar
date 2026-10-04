@@ -52,16 +52,19 @@ final class Monitor {
             guard prefs != oldValue else { return }
             prefs.save()
             if prefs.interval != oldValue.interval { startTimer() }
+            if prefs.pressureAlert != oldValue.pressureAlert, prefs.pressureAlert != .off { alerts.requestPermission() }
             updateBar()
         }
     }
 
     @ObservationIgnored let sampler = Sampler()
+    @ObservationIgnored private let alerts = PressureAlerts()
     @ObservationIgnored private var latest = Snapshot()
     @ObservationIgnored private var panelOpen = false
     @ObservationIgnored private var timer: Timer?
 
     init() {
+        if prefs.pressureAlert != .off { alerts.requestPermission() }
         sample()
         startTimer()
 
@@ -98,6 +101,7 @@ final class Monitor {
             .suffix(historyLength))
         latest = next
         if panelOpen { shown = next }
+        alerts.check(next.memory, threshold: prefs.pressureAlert)
         updateBar()
     }
 

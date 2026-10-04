@@ -53,6 +53,27 @@ enum BarLayout: String, Choice {
     }
 }
 
+enum PressureAlert: String, Choice {
+    case off, warning, critical
+
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .warning: "Warning"
+        case .critical: "Critical"
+        }
+    }
+
+    /// The lowest pressure announced.
+    var level: Pressure? {
+        switch self {
+        case .off: nil
+        case .warning: .warning
+        case .critical: .critical
+        }
+    }
+}
+
 struct Preferences: Codable, Equatable {
     var content = BarContent.both
     var cpuFormat = CPUFormat.load
@@ -61,6 +82,7 @@ struct Preferences: Codable, Equatable {
     var showIcons = true
     /// Seconds between samples; CPU load and core clocks are averaged over this window.
     var interval: TimeInterval = 2
+    var pressureAlert = PressureAlert.warning
 
     static let intervals: [TimeInterval] = [1, 2, 5]
     private static let key = "settings"
@@ -74,6 +96,26 @@ struct Preferences: Codable, Equatable {
 
     func save() {
         if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: Self.key) }
+    }
+}
+
+// In an extension so the struct keeps its implicit initializers.
+extension Preferences {
+    /// Keys missing or unreadable in the stored settings, e.g. ones added by a later version,
+    /// take their defaults instead of failing the whole decode and resetting everything.
+    init(from decoder: Decoder) throws {
+        self.init()
+        let stored = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? stored.decodeIfPresent(T.self, forKey: key)) ?? fallback
+        }
+        content = value(.content, content)
+        cpuFormat = value(.cpuFormat, cpuFormat)
+        memoryFormat = value(.memoryFormat, memoryFormat)
+        layout = value(.layout, layout)
+        showIcons = value(.showIcons, showIcons)
+        interval = value(.interval, interval)
+        pressureAlert = value(.pressureAlert, pressureAlert)
     }
 }
 
@@ -107,6 +149,12 @@ struct SettingsView: View {
                 .labelsHidden()
             }
             Text("Shorter is livelier but costs more CPU. Graphs keep the last \(historyLength) samples.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Heading("Alerts")
+            ChoiceRow(title: "Pressure", selection: $monitor.prefs.pressureAlert)
+            Text("Notifies when memory pressure reaches this level, at most once per level every \(Int(PressureAlerts.cooldown / 60)) minutes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
