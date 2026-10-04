@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// Seconds between samples; CPU load and core clocks are averaged over this window.
-let sampleInterval: TimeInterval = 2
 /// Samples kept for the panel's history graphs.
 let historyLength = 90
 
@@ -18,17 +16,45 @@ struct Snapshot {
     var memoryHistory: [Double] = []
 
     var load: Double { cores.isEmpty ? 0 : cores.map(\.load).reduce(0, +) / Double(cores.count) }
+
+    /// Core clocks weighted by each core's load: the speed the work actually ran at.
+    var clock: Double? {
+        let busy = cores.compactMap { core in core.mhz.map { (load: core.load, mhz: $0) } }
+        let weight = busy.map(\.load).reduce(0, +)
+        return weight > 0 ? busy.map { $0.load * $0.mhz }.reduce(0, +) / weight : nil
+    }
+}
+
+/// One symbol + value pair in the menu bar. `widest` reserves a fixed slot for the value so the
+/// item does not jitter as digits change.
+struct BarItem: Equatable {
+    let symbol: String
+    let text: String
+    let widest: String
+}
+
+struct BarLabel: Equatable {
+    var items: [BarItem] = []
+    var stacked = false
+    var showIcons = true
 }
 
 @MainActor
 @Observable
 final class Monitor {
-    /// Menu bar text, reassigned only when it changes so the label redraws only then.
-    private(set) var barCPU = ""
-    private(set) var barMemory = ""
+    /// What the menu bar shows, reassigned only when it changes so the label redraws only then.
+    private(set) var bar = BarLabel()
     /// What the panel shows. MenuBarExtra keeps the closed panel's views alive, and laying them
     /// out on every sample cost ~4% CPU, so this is only refreshed while the panel is open.
     private(set) var shown = Snapshot()
+    var prefs = Preferences.load() {
+        didSet {
+            guard prefs != oldValue else { return }
+            prefs.save()
+            if prefs.interval != oldValue.interval { startTimer() }
+            updateBar()
+        }
+    }
 
     @ObservationIgnored let sampler = Sampler()
     @ObservationIgnored private var latest = Snapshot()
@@ -37,12 +63,7 @@ final class Monitor {
 
     init() {
         sample()
-        let timer = Timer(timeInterval: sampleInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sample() }
-        }
-        timer.tolerance = sampleInterval / 10
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        startTimer()
 
         // The panel's window becomes key when it opens and resigns key when it closes.
         for (name, open) in [(NSWindow.didBecomeKeyNotification, true), (NSWindow.didResignKeyNotification, false)] {
@@ -56,6 +77,16 @@ final class Monitor {
         }
     }
 
+    private func startTimer() {
+        timer?.invalidate()
+        let timer = Timer(timeInterval: prefs.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sample() }
+        }
+        timer.tolerance = prefs.interval / 10
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
     private func sample() {
         var next = latest
         next.cores = sampler.cores()
@@ -67,52 +98,79 @@ final class Monitor {
             .suffix(historyLength))
         latest = next
         if panelOpen { shown = next }
+        updateBar()
+    }
 
-        let cpu = "\(Int((next.load * 100).rounded()))%"
-        let gib = next.memory.used / 1_073_741_824
-        let memory = String(format: gib >= 99.95 ? "%.0fG" : "%.1fG", gib)
-        if cpu != barCPU { barCPU = cpu }
-        if memory != barMemory { barMemory = memory }
+    private func updateBar() {
+        var items: [BarItem] = []
+        if prefs.content != .memory {
+            items.append(prefs.cpuFormat == .clock && sampler.hasClocks
+                ? BarItem(symbol: "cpu", text: latest.clock.map { String(format: "%.1fGHz", $0 / 1000) } ?? "idle",
+                          widest: "0.0GHz")
+                : BarItem(symbol: "cpu", text: "\(Int((latest.load * 100).rounded()))%", widest: "100%"))
+        }
+        if prefs.content != .cpu {
+            let memory = latest.memory
+            if prefs.memoryFormat == .percent {
+                let used = memory.total > 0 ? memory.used / memory.total : 0
+                items.append(BarItem(symbol: "memorychip", text: "\(Int((used * 100).rounded()))%", widest: "100%"))
+            } else {
+                let gib = memory.used / 1_073_741_824
+                items.append(BarItem(symbol: "memorychip", text: String(format: gib >= 99.95 ? "%.0fG" : "%.1fG", gib),
+                                     widest: "00.0G"))
+            }
+        }
+        let label = BarLabel(items: items, stacked: prefs.layout == .stacked && items.count > 1,
+                             showIcons: prefs.showIcons)
+        if label != bar { bar = label }
     }
 }
 
-/// MenuBarExtra keeps only one image and one text from its label, so both symbol + value pairs
+/// MenuBarExtra keeps only one image and one text from its label, so the symbol + value pairs
 /// are drawn into a single template image, which the menu bar tints for light and dark.
 private struct MenuBarLabel: View {
     let monitor: Monitor
 
     var body: some View {
-        Image(nsImage: Self.render([
-            ("cpu", monitor.barCPU, "100%"),
-            ("memorychip", monitor.barMemory, "00.0G"),
-        ]))
+        Image(nsImage: Self.render(monitor.bar))
     }
 
-    /// `widest` reserves a fixed slot for each value so the item does not jitter as digits change.
-    private static func render(_ items: [(symbol: String, text: String, widest: String)]) -> NSImage {
+    /// Side by side, or one pair per row in smaller type when stacked.
+    private static func render(_ label: BarLabel) -> NSImage {
+        let stacked = label.stacked
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: stacked ? 9 : 12, weight: .medium),
             .foregroundColor: NSColor.black,
         ]
-        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        let iconGap: CGFloat = 3, itemGap: CGFloat = 8, height: CGFloat = 18
-        let parts = items.map { item in
-            (icon: NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(symbolConfig) ?? NSImage(),
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: stacked ? 8.5 : 13, weight: .medium)
+        let iconGap: CGFloat = stacked ? 2 : 3, itemGap: CGFloat = 8
+        let height: CGFloat = stacked ? 20 : 18
+        let rowHeight = stacked ? height / 2 : height
+        let parts = label.items.map { item in
+            (icon: label.showIcons
+                ? NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)?.withSymbolConfiguration(symbolConfig)
+                : nil,
              text: item.text as NSString,
              slot: ceil((item.widest as NSString).size(withAttributes: attributes).width))
         }
-        let width = parts.map { $0.icon.size.width + iconGap + $0.slot }.reduce(0, +)
-            + itemGap * CGFloat(max(parts.count - 1, 0))
+        let widths = parts.map { part in (part.icon.map { $0.size.width + iconGap } ?? 0) + part.slot }
+        let width = stacked
+            ? widths.max() ?? 0
+            : widths.reduce(0, +) + itemGap * CGFloat(max(parts.count - 1, 0))
 
         let image = NSImage(size: NSSize(width: ceil(width), height: height), flipped: false) { _ in
             var x: CGFloat = 0
-            for part in parts {
-                let icon = part.icon.size
-                part.icon.draw(in: NSRect(x: x, y: (height - icon.height) / 2, width: icon.width, height: icon.height))
-                x += icon.width + iconGap
+            for (index, part) in parts.enumerated() {
+                // The first pair goes on the top row; y grows upwards.
+                let y = stacked ? CGFloat(parts.count - 1 - index) * rowHeight : 0
+                if stacked { x = 0 }
+                if let icon = part.icon {
+                    let size = icon.size
+                    icon.draw(in: NSRect(x: x, y: y + (rowHeight - size.height) / 2, width: size.width, height: size.height))
+                    x += size.width + iconGap
+                }
                 let text = part.text.size(withAttributes: attributes)
-                part.text.draw(at: NSPoint(x: x, y: (height - text.height) / 2), withAttributes: attributes)
+                part.text.draw(at: NSPoint(x: x, y: y + (rowHeight - text.height) / 2), withAttributes: attributes)
                 x += part.slot + itemGap
             }
             return true

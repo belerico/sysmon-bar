@@ -12,17 +12,23 @@ private let cachedColor = Color.gray
 
 struct PanelView: View {
     let monitor: Monitor
+    @State private var showingSettings = false
 
     var body: some View {
         let snapshot = monitor.shown
         VStack(alignment: .leading, spacing: 12) {
-            CPUSection(snapshot: snapshot, hasClocks: monitor.sampler.hasClocks)
-            Divider()
-            MemorySection(memory: snapshot.memory, history: snapshot.memoryHistory)
+            if showingSettings {
+                SettingsView(monitor: monitor)
+            } else {
+                CPUSection(snapshot: snapshot, hasClocks: monitor.sampler.hasClocks)
+                Divider()
+                MemorySection(memory: snapshot.memory, history: snapshot.memoryHistory)
+            }
             Divider()
             HStack {
-                Text("\(monitor.sampler.chip) · every \(Int(sampleInterval)) s")
+                Text("\(monitor.sampler.chip) · every \(Int(monitor.prefs.interval)) s")
                 Spacer()
+                Button(showingSettings ? "Done" : "Settings") { showingSettings.toggle() }
                 Button("Quit") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
             }

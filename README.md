@@ -6,8 +6,10 @@ A small macOS menu bar item showing CPU load and memory used (`⌗ 23%  ▤ 10.4
   load and average clock, grouped into performance and efficiency cores.
 - **Memory**: used of total with a history graph, and the split into app, wired, compressed, cached
   and free memory, memory pressure and swap.
+- **Settings**: what the menu bar shows (CPU, memory or both; CPU as load or clock; memory as GB
+  or percent; one row or stacked; icons on or off) and how often it samples (1, 2 or 5 s).
 
-It samples every 2 seconds (`sampleInterval` in `App.swift`).
+It samples every 2 seconds by default.
 
 ## Where the numbers come from
 
