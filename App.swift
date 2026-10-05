@@ -49,11 +49,16 @@ final class Monitor {
     /// What the panel shows. MenuBarExtra keeps the closed panel's views alive, and laying them
     /// out on every sample cost ~4% CPU, so this is only refreshed while the panel is open.
     private(set) var shown = Snapshot()
+    /// The panel's fonts, rebuilt only when the font settings change.
+    private(set) var typeface = Typeface()
     var prefs = Preferences.load() {
         didSet {
             guard prefs != oldValue else { return }
             prefs.save()
             if prefs.interval != oldValue.interval { startTimer() }
+            if prefs.font != oldValue.font || prefs.fontSize != oldValue.fontSize {
+                typeface = Typeface(prefs.font, size: prefs.fontSize)
+            }
             if prefs.pressureAlert != oldValue.pressureAlert, prefs.pressureAlert != .off { alerts.requestPermission() }
             updateBar()
         }
@@ -66,6 +71,7 @@ final class Monitor {
     @ObservationIgnored private var timer: Timer?
 
     init() {
+        typeface = Typeface(prefs.font, size: prefs.fontSize)
         if prefs.pressureAlert != .off { alerts.requestPermission() }
         sample()
         startTimer()

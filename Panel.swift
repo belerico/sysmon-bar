@@ -10,6 +10,55 @@ private let wiredColor = Color.orange
 private let compressedColor = Color.purple
 private let cachedColor = Color.gray
 
+/// The panel's text styles in the chosen font, at macOS's sizes scaled by the chosen size over the
+/// 12 pt default.
+struct Typeface {
+    /// macOS's sizes and weights for the styles the panel uses.
+    private static let styles: [Font.TextStyle: (size: CGFloat, weight: NSFont.Weight)] = [
+        .body: (13, .regular), .headline: (13, .bold), .subheadline: (11, .regular), .caption: (10, .regular),
+    ]
+
+    private var fonts: [Font.TextStyle: Font] = [:]
+    /// How much wider text sets than in the default font and size, to widen fixed widths along.
+    /// Never below 1: buttons, swatches and spacing do not shrink with smaller text.
+    private(set) var scale: CGFloat = 1
+
+    init(_ font: BarFont = .system(.standard), size: CGFloat = 12) {
+        for (style, base) in Self.styles {
+            fonts[style] = Font(font.font(size: base.size * size / 12, weight: base.weight) as CTFont)
+        }
+        let sample = "Compressed 10.4 GB 3.20 GHz 100%" as NSString
+        func width(_ font: NSFont) -> CGFloat { sample.size(withAttributes: [.font: font]).width }
+        scale = max(1, width(font.font(size: 13 * size / 12, weight: .regular))
+            / width(BarFont.system(.standard).font(size: 13, weight: .regular)))
+    }
+
+    func font(_ style: Font.TextStyle) -> Font { fonts[style] ?? .body }
+}
+
+private struct TypefaceKey: EnvironmentKey {
+    static let defaultValue = Typeface()
+}
+
+extension EnvironmentValues {
+    var typeface: Typeface {
+        get { self[TypefaceKey.self] }
+        set { self[TypefaceKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// One of the panel's text styles, in the chosen font and size, always with fixed-width digits.
+    func textStyle(_ style: Font.TextStyle) -> some View { modifier(TextStyle(style: style)) }
+}
+
+private struct TextStyle: ViewModifier {
+    @Environment(\.typeface) private var typeface
+    let style: Font.TextStyle
+
+    func body(content: Content) -> some View { content.font(typeface.font(style)) }
+}
+
 struct PanelView: View {
     let monitor: Monitor
     @State private var showingSettings = false
@@ -32,11 +81,13 @@ struct PanelView: View {
                 Button("Quit") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
             }
-            .font(.caption)
+            .textStyle(.caption)
             .foregroundStyle(.secondary)
         }
+        .textStyle(.body)
         .padding(14)
-        .frame(width: 320)
+        .frame(width: 320 * monitor.typeface.scale)
+        .environment(\.typeface, monitor.typeface)
     }
 }
 
@@ -56,7 +107,7 @@ private struct CPUSection: View {
                 Text("Load " + snapshot.loadAverage.map { String(format: "%.2f", $0) }.joined(separator: " "))
                     .foregroundStyle(.secondary)
             }
-            .font(.caption.monospacedDigit())
+            .textStyle(.caption)
             ForEach(CoreKind.allCases, id: \.self) { kind in
                 let group = cores.filter { $0.kind == kind }
                 if !group.isEmpty {
@@ -71,9 +122,11 @@ private struct Cluster: View {
     let kind: CoreKind
     let cores: [Core]
     let hasClocks: Bool
+    @Environment(\.typeface) private var typeface
 
     var body: some View {
         let clocks = cores.compactMap(\.mhz)
+        let scale = typeface.scale
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("\(kind.title) · \(percent(mean(cores.map(\.load))))")
@@ -82,24 +135,24 @@ private struct Cluster: View {
                     Text(clocks.isEmpty ? "idle" : "avg " + gigahertz(mean(clocks)))
                 }
             }
-            .font(.caption.monospacedDigit())
+            .textStyle(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
             ForEach(cores) { core in
                 HStack(spacing: 8) {
                     Text(core.name)
-                        .frame(width: 22, alignment: .leading)
+                        .frame(width: 22 * scale, alignment: .leading)
                         .foregroundStyle(.secondary)
                     LoadBar(user: core.user, system: core.system)
                     Text(percent(core.load))
-                        .frame(width: 34, alignment: .trailing)
+                        .frame(width: 34 * scale, alignment: .trailing)
                     if hasClocks {
                         Text(core.mhz.map(gigahertz) ?? "idle")
-                            .frame(width: 58, alignment: .trailing)
+                            .frame(width: 58 * scale, alignment: .trailing)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .font(.system(size: 11).monospacedDigit())
+                .textStyle(.subheadline)
             }
         }
     }
@@ -134,13 +187,13 @@ private struct MemorySection: View {
                     Swatch(color: pressureColor, label: "Pressure", value: memory.pressure.rawValue)
                 }
             }
-            .font(.caption.monospacedDigit())
+            .textStyle(.caption)
             HStack {
                 Text("Swap").foregroundStyle(.secondary)
                 Spacer()
                 Text(memory.swapTotal > 0 ? "\(bytes(memory.swapUsed)) of \(bytes(memory.swapTotal))" : "off")
             }
-            .font(.caption.monospacedDigit())
+            .textStyle(.caption)
         }
     }
 
@@ -162,9 +215,9 @@ private struct SectionHeader: View {
         HStack {
             Label(title, systemImage: symbol)
             Spacer()
-            Text(value).monospacedDigit()
+            Text(value)
         }
-        .font(.headline)
+        .textStyle(.headline)
     }
 }
 

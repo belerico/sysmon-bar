@@ -80,18 +80,20 @@ enum BarFont: Codable, Hashable {
     case system(SystemDesign)
     case family(String)
 
-    /// Medium weight where the family has one, regular otherwise, with fixed-width digits so the
-    /// values do not wobble as they change. A family since uninstalled falls back to the system font.
-    func font(size: CGFloat) -> NSFont {
+    /// With fixed-width digits so the values do not wobble as they change. Families without the
+    /// weight get the nearest one they have, medium becoming regular; a family since uninstalled
+    /// falls back to the system font.
+    func font(size: CGFloat, weight: NSFont.Weight = .medium) -> NSFont {
         let base: NSFont? = switch self {
         case .system(let design):
-            NSFont.systemFont(ofSize: size, weight: .medium).fontDescriptor.withDesign(design.design)
+            NSFont.systemFont(ofSize: size, weight: weight).fontDescriptor.withDesign(design.design)
                 .flatMap { NSFont(descriptor: $0, size: size) }
         case .family(let name):
             // NSFontManager weights run 0-15: 5 is regular, 6 medium, 9 bold.
-            NSFontManager.shared.font(withFamily: name, traits: [], weight: 6, size: size)
+            NSFontManager.shared.font(withFamily: name, traits: [],
+                                      weight: weight == .bold ? 9 : weight == .medium ? 6 : 5, size: size)
         }
-        guard let base else { return .monospacedDigitSystemFont(ofSize: size, weight: .medium) }
+        guard let base else { return .monospacedDigitSystemFont(ofSize: size, weight: weight) }
         let digits = base.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
@@ -128,7 +130,8 @@ struct Preferences: Codable, Equatable {
     var layout = BarLayout.row
     var showIcons = true
     var font = BarFont.system(.standard)
-    /// Point size of the menu bar text on one row; stacked rows use three quarters of it.
+    /// Point size of the menu bar text on one row; stacked rows use three quarters of it, and the
+    /// panel scales macOS's text sizes by it over 12.
     var fontSize: CGFloat = 12
     /// Seconds between samples; CPU load and core clocks are averaged over this window.
     var interval: TimeInterval = 2
@@ -182,7 +185,7 @@ struct SettingsView: View {
     var body: some View {
         let prefs = monitor.prefs
         VStack(alignment: .leading, spacing: 8) {
-            Label("Settings", systemImage: "gearshape").font(.headline)
+            Label("Settings", systemImage: "gearshape").textStyle(.headline)
             Heading("Menu bar")
             ChoiceRow(title: "Show", selection: $monitor.prefs.content)
             ChoiceRow(title: "CPU as", selection: $monitor.prefs.cpuFormat)
@@ -197,6 +200,7 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
+            Heading("Text")
             SettingRow(title: "Font") {
                 Picker("Font", selection: $monitor.prefs.font) {
                     ForEach(SystemDesign.allCases, id: \.self) { Text($0.label).tag(BarFont.system($0)) }
@@ -208,8 +212,11 @@ struct SettingsView: View {
             }
             SettingRow(title: "Size") {
                 Stepper("\(Int(prefs.fontSize)) pt", value: $monitor.prefs.fontSize, in: Preferences.fontSizes)
-                    .monospacedDigit()
             }
+            Text("In the menu bar and this panel. Stacked, the menu bar uses three quarters of the size.")
+                .textStyle(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Heading("Sampling")
             SettingRow(title: "Refresh") {
                 Picker("Refresh", selection: $monitor.prefs.interval) {
@@ -219,13 +226,13 @@ struct SettingsView: View {
                 .labelsHidden()
             }
             Text("Shorter is livelier but costs more CPU. Graphs keep the last \(historyLength) samples.")
-                .font(.caption)
+                .textStyle(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Heading("Alerts")
             ChoiceRow(title: "Pressure", selection: $monitor.prefs.pressureAlert)
             Text("Notifies when memory pressure reaches this level, at most once per level every \(Int(PressureAlerts.cooldown / 60)) minutes.")
-                .font(.caption)
+                .textStyle(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -239,7 +246,7 @@ private struct Heading: View {
 
     var body: some View {
         Text(title)
-            .font(.caption)
+            .textStyle(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
     }
@@ -248,10 +255,11 @@ private struct Heading: View {
 private struct SettingRow<Control: View>: View {
     let title: String
     @ViewBuilder let control: Control
+    @Environment(\.typeface) private var typeface
 
     var body: some View {
         HStack {
-            Text(title).frame(width: 76, alignment: .leading)
+            Text(title).frame(width: 76 * typeface.scale, alignment: .leading)
             control
             Spacer(minLength: 0)
         }
