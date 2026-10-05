@@ -53,6 +53,53 @@ enum BarLayout: String, Choice {
     }
 }
 
+enum SystemDesign: String, Choice {
+    case standard, rounded, monospaced, serif
+
+    var label: String {
+        switch self {
+        case .standard: "System"
+        case .rounded: "System Rounded"
+        case .monospaced: "System Mono"
+        case .serif: "System Serif"
+        }
+    }
+
+    var design: NSFontDescriptor.SystemDesign {
+        switch self {
+        case .standard: .default
+        case .rounded: .rounded
+        case .monospaced: .monospaced
+        case .serif: .serif
+        }
+    }
+}
+
+/// The menu bar's typeface: a design of the system font, or an installed family.
+enum BarFont: Codable, Hashable {
+    case system(SystemDesign)
+    case family(String)
+
+    /// Medium weight where the family has one, regular otherwise, with fixed-width digits so the
+    /// values do not wobble as they change. A family since uninstalled falls back to the system font.
+    func font(size: CGFloat) -> NSFont {
+        let base: NSFont? = switch self {
+        case .system(let design):
+            NSFont.systemFont(ofSize: size, weight: .medium).fontDescriptor.withDesign(design.design)
+                .flatMap { NSFont(descriptor: $0, size: size) }
+        case .family(let name):
+            // NSFontManager weights run 0-15: 5 is regular, 6 medium, 9 bold.
+            NSFontManager.shared.font(withFamily: name, traits: [], weight: 6, size: size)
+        }
+        guard let base else { return .monospacedDigitSystemFont(ofSize: size, weight: .medium) }
+        let digits = base.fontDescriptor.addingAttributes([.featureSettings: [[
+            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+            NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+        ]]])
+        return NSFont(descriptor: digits, size: size) ?? base
+    }
+}
+
 enum PressureAlert: String, Choice {
     case off, warning, critical
 
@@ -80,10 +127,15 @@ struct Preferences: Codable, Equatable {
     var memoryFormat = MemoryFormat.used
     var layout = BarLayout.row
     var showIcons = true
+    var font = BarFont.system(.standard)
+    /// Point size of the menu bar text on one row; stacked rows use three quarters of it.
+    var fontSize: CGFloat = 12
     /// Seconds between samples; CPU load and core clocks are averaged over this window.
     var interval: TimeInterval = 2
     var pressureAlert = PressureAlert.warning
 
+    /// 16 pt still fits the 22 pt menu bar, icons included.
+    static let fontSizes: ClosedRange<CGFloat> = 9...16
     static let intervals: [TimeInterval] = [1, 2, 5]
     private static let key = "settings"
 
@@ -114,6 +166,8 @@ extension Preferences {
         memoryFormat = value(.memoryFormat, memoryFormat)
         layout = value(.layout, layout)
         showIcons = value(.showIcons, showIcons)
+        font = value(.font, font)
+        fontSize = value(.fontSize, fontSize)
         interval = value(.interval, interval)
         pressureAlert = value(.pressureAlert, pressureAlert)
     }
@@ -121,6 +175,9 @@ extension Preferences {
 
 struct SettingsView: View {
     @Bindable var monitor: Monitor
+
+    /// Read once: fonts installed while the app runs show up after a restart.
+    private static let families = NSFontManager.shared.availableFontFamilies
 
     var body: some View {
         let prefs = monitor.prefs
@@ -139,6 +196,19 @@ struct SettingsView: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
+            }
+            SettingRow(title: "Font") {
+                Picker("Font", selection: $monitor.prefs.font) {
+                    ForEach(SystemDesign.allCases, id: \.self) { Text($0.label).tag(BarFont.system($0)) }
+                    Divider()
+                    ForEach(Self.families, id: \.self) { Text($0).tag(BarFont.family($0)) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            SettingRow(title: "Size") {
+                Stepper("\(Int(prefs.fontSize)) pt", value: $monitor.prefs.fontSize, in: Preferences.fontSizes)
+                    .monospacedDigit()
             }
             Heading("Sampling")
             SettingRow(title: "Refresh") {

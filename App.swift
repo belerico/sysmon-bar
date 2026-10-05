@@ -37,6 +37,8 @@ struct BarLabel: Equatable {
     var items: [BarItem] = []
     var stacked = false
     var showIcons = true
+    var font = BarFont.system(.standard)
+    var fontSize: CGFloat = 12
 }
 
 @MainActor
@@ -125,7 +127,7 @@ final class Monitor {
             }
         }
         let label = BarLabel(items: items, stacked: prefs.layout == .stacked && items.count > 1,
-                             showIcons: prefs.showIcons)
+                             showIcons: prefs.showIcons, font: prefs.font, fontSize: prefs.fontSize)
         if label != bar { bar = label }
     }
 }
@@ -142,14 +144,15 @@ private struct MenuBarLabel: View {
     /// Side by side, or one pair per row in smaller type when stacked.
     private static func render(_ label: BarLabel) -> NSImage {
         let stacked = label.stacked
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: stacked ? 9 : 12, weight: .medium),
-            .foregroundColor: NSColor.black,
-        ]
-        let symbolConfig = NSImage.SymbolConfiguration(pointSize: stacked ? 8.5 : 13, weight: .medium)
+        var font = label.font.font(size: label.fontSize)
+        if stacked {
+            // Three quarters of the size, but with digits at most 7 pt tall so the two 10 pt rows
+            // keep a gap between them.
+            font = label.font.font(size: min(label.fontSize * 0.75, 7 * font.pointSize / font.capHeight))
+        }
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: font.pointSize + (stacked ? -0.5 : 1), weight: .medium)
         let iconGap: CGFloat = stacked ? 2 : 3, itemGap: CGFloat = 8
-        let height: CGFloat = stacked ? 20 : 18
-        let rowHeight = stacked ? height / 2 : height
         let parts = label.items.map { item in
             (icon: label.showIcons
                 ? NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)?.withSymbolConfiguration(symbolConfig)
@@ -161,6 +164,8 @@ private struct MenuBarLabel: View {
         let width = stacked
             ? widths.max() ?? 0
             : widths.reduce(0, +) + itemGap * CGFloat(max(parts.count - 1, 0))
+        let height = stacked ? 20 : max(18, ceil(parts.compactMap { $0.icon?.size.height }.max() ?? 0))
+        let rowHeight = stacked ? height / 2 : height
 
         let image = NSImage(size: NSSize(width: ceil(width), height: height), flipped: false) { _ in
             var x: CGFloat = 0
@@ -173,8 +178,10 @@ private struct MenuBarLabel: View {
                     icon.draw(in: NSRect(x: x, y: y + (rowHeight - size.height) / 2, width: size.width, height: size.height))
                     x += size.width + iconGap
                 }
-                let text = part.text.size(withAttributes: attributes)
-                part.text.draw(at: NSPoint(x: x, y: y + (rowHeight - text.height) / 2), withAttributes: attributes)
+                // Centered on the digits' cap height, which unlike the line height means the same
+                // thing in every font. Without .usesLineFragmentOrigin the rect's origin is the baseline.
+                let baseline = y + (rowHeight - font.capHeight) / 2
+                part.text.draw(with: NSRect(x: x, y: baseline, width: width, height: 0), attributes: attributes)
                 x += part.slot + itemGap
             }
             return true
