@@ -75,23 +75,21 @@ enum SystemDesign: String, Choice {
     }
 }
 
-/// The menu bar's typeface: a design of the system font, or an installed family.
-enum BarFont: Codable, Hashable {
+/// The panel's typeface: a design of the system font, or an installed family.
+enum PanelFont: Codable, Hashable {
     case system(SystemDesign)
     case family(String)
 
-    /// With fixed-width digits so the values do not wobble as they change. Families without the
-    /// weight get the nearest one they have, medium becoming regular; a family since uninstalled
-    /// falls back to the system font.
-    func font(size: CGFloat, weight: NSFont.Weight = .medium) -> NSFont {
+    /// With fixed-width digits so the values do not wobble as they change. Families without bold
+    /// get regular; a family since uninstalled falls back to the system font.
+    func font(size: CGFloat, weight: NSFont.Weight) -> NSFont {
         let base: NSFont? = switch self {
         case .system(let design):
             NSFont.systemFont(ofSize: size, weight: weight).fontDescriptor.withDesign(design.design)
                 .flatMap { NSFont(descriptor: $0, size: size) }
         case .family(let name):
-            // NSFontManager weights run 0-15: 5 is regular, 6 medium, 9 bold.
-            NSFontManager.shared.font(withFamily: name, traits: [],
-                                      weight: weight == .bold ? 9 : weight == .medium ? 6 : 5, size: size)
+            // NSFontManager weights run 0-15: 5 is regular, 9 bold.
+            NSFontManager.shared.font(withFamily: name, traits: [], weight: weight == .bold ? 9 : 5, size: size)
         }
         guard let base else { return .monospacedDigitSystemFont(ofSize: size, weight: weight) }
         let digits = base.fontDescriptor.addingAttributes([.featureSettings: [[
@@ -129,15 +127,13 @@ struct Preferences: Codable, Equatable {
     var memoryFormat = MemoryFormat.used
     var layout = BarLayout.row
     var showIcons = true
-    var font = BarFont.system(.standard)
-    /// Point size of the menu bar text on one row; stacked rows use three quarters of it, and the
-    /// panel scales macOS's text sizes by it over 12.
+    var font = PanelFont.system(.standard)
+    /// The panel scales macOS's text sizes by this over 12 pt.
     var fontSize: CGFloat = 12
     /// Seconds between samples; CPU load and core clocks are averaged over this window.
     var interval: TimeInterval = 2
     var pressureAlert = PressureAlert.warning
 
-    /// 16 pt still fits the 22 pt menu bar, icons included.
     static let fontSizes: ClosedRange<CGFloat> = 9...16
     static let intervals: [TimeInterval] = [1, 2, 5]
     private static let key = "settings"
@@ -185,7 +181,7 @@ struct SettingsView: View {
     var body: some View {
         let prefs = monitor.prefs
         VStack(alignment: .leading, spacing: 8) {
-            Label("Settings", systemImage: "gearshape").textStyle(.headline)
+            HeadlineLabel(title: "Settings", symbol: "gearshape").textStyle(.headline)
             Heading("Menu bar")
             ChoiceRow(title: "Show", selection: $monitor.prefs.content)
             ChoiceRow(title: "CPU as", selection: $monitor.prefs.cpuFormat)
@@ -203,9 +199,9 @@ struct SettingsView: View {
             Heading("Text")
             SettingRow(title: "Font") {
                 Picker("Font", selection: $monitor.prefs.font) {
-                    ForEach(SystemDesign.allCases, id: \.self) { Text($0.label).tag(BarFont.system($0)) }
+                    ForEach(SystemDesign.allCases, id: \.self) { Text($0.label).tag(PanelFont.system($0)) }
                     Divider()
-                    ForEach(Self.families, id: \.self) { Text($0).tag(BarFont.family($0)) }
+                    ForEach(Self.families, id: \.self) { Text($0).tag(PanelFont.family($0)) }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
@@ -213,7 +209,7 @@ struct SettingsView: View {
             SettingRow(title: "Size") {
                 Stepper("\(Int(prefs.fontSize)) pt", value: $monitor.prefs.fontSize, in: Preferences.fontSizes)
             }
-            Text("In the menu bar and this panel. Stacked, the menu bar uses three quarters of the size.")
+            Text("For this panel; the menu bar keeps the system font.")
                 .textStyle(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

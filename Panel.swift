@@ -23,14 +23,14 @@ struct Typeface {
     /// Never below 1: buttons, swatches and spacing do not shrink with smaller text.
     private(set) var scale: CGFloat = 1
 
-    init(_ font: BarFont = .system(.standard), size: CGFloat = 12) {
+    init(_ font: PanelFont = .system(.standard), size: CGFloat = 12) {
         for (style, base) in Self.styles {
             fonts[style] = Font(font.font(size: base.size * size / 12, weight: base.weight) as CTFont)
         }
         let sample = "Compressed 10.4 GB 3.20 GHz 100%" as NSString
         func width(_ font: NSFont) -> CGFloat { sample.size(withAttributes: [.font: font]).width }
         scale = max(1, width(font.font(size: 13 * size / 12, weight: .regular))
-            / width(BarFont.system(.standard).font(size: 13, weight: .regular)))
+            / width(PanelFont.system(.standard).font(size: 13, weight: .regular)))
     }
 
     func font(_ style: Font.TextStyle) -> Font { fonts[style] ?? .body }
@@ -213,11 +213,22 @@ private struct SectionHeader: View {
 
     var body: some View {
         HStack {
-            Label(title, systemImage: symbol)
+            HeadlineLabel(title: title, symbol: symbol)
             Spacer()
             Text(value)
         }
         .textStyle(.headline)
+    }
+}
+
+/// A title in the chosen font with its symbol at macOS's headline size: icons keep their size
+/// whatever the text size.
+struct HeadlineLabel: View {
+    let title: String
+    let symbol: String
+
+    var body: some View {
+        Label { Text(title) } icon: { Image(systemName: symbol).font(.headline) }
     }
 }
 

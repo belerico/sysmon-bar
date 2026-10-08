@@ -7,9 +7,9 @@ A small macOS menu bar item showing CPU load and memory used (`⌗ 23%  ▤ 10.4
 - **Memory**: used of total with a history graph, and the split into app, wired, compressed, cached
   and free memory, memory pressure and swap.
 - **Settings**: what the menu bar shows (CPU, memory or both; CPU as load or clock; memory as GB
-  or percent; one row or stacked; icons on or off), the font of the menu bar and panel (any installed
-  family or a design of the system font) and its size (9 to 16 pt), how often it samples (1, 2 or 5 s), and
-  a notification when memory pressure reaches Warning or Critical (on at Warning by default).
+  or percent; one row or stacked; icons on or off), the panel's font (any installed family or a
+  design of the system font) and its size (9 to 16 pt), how often it samples (1, 2 or 5 s), and a
+  notification when memory pressure reaches Warning or Critical (on at Warning by default).
 
 It samples every 2 seconds by default.
 
